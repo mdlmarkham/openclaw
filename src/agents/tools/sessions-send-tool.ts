@@ -15,7 +15,7 @@ import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
   extractAssistantText,
-  isResolvedSessionVisibleToRequester,
+  isRequesterSpawnedSessionVisible,
   resolveEffectiveSessionToolsVisibility,
   resolveSessionReference,
   resolveSandboxedSessionToolContext,
@@ -176,19 +176,19 @@ export function createSessionsSendTool(opts?: {
       const displayKey = resolvedSession.displayKey;
       const resolvedViaSessionId = resolvedSession.resolvedViaSessionId;
 
-      const visible = await isResolvedSessionVisibleToRequester({
-        requesterSessionKey: effectiveRequesterKey,
-        targetSessionKey: resolvedKey,
-        restrictToSpawned,
-        resolvedViaSessionId,
-      });
-      if (!visible) {
-        return jsonResult({
-          runId: crypto.randomUUID(),
-          status: "forbidden",
-          error: `Session not visible from this sandboxed agent session: ${sessionKey}`,
-          sessionKey: displayKey,
+      if (restrictToSpawned && !resolvedViaSessionId && resolvedKey !== effectiveRequesterKey) {
+        const ok = await isRequesterSpawnedSessionVisible({
+          requesterSessionKey: effectiveRequesterKey,
+          targetSessionKey: resolvedKey,
         });
+        if (!ok) {
+          return jsonResult({
+            runId: crypto.randomUUID(),
+            status: "forbidden",
+            error: `Session not visible from this sandboxed agent session: ${sessionKey}`,
+            sessionKey: displayKey,
+          });
+        }
       }
       const timeoutSeconds =
         typeof params.timeoutSeconds === "number" && Number.isFinite(params.timeoutSeconds)
@@ -238,7 +238,12 @@ export function createSessionsSendTool(opts?: {
       const requesterChannel = opts?.agentChannel;
       const maxPingPongTurns = resolvePingPongTurns(cfg);
       const delivery = { status: "pending", mode: "announce" as const };
+      const shouldRunA2A =
+        !!requesterSessionKey && requesterSessionKey !== resolvedKey && maxPingPongTurns > 0;
       const startA2AFlow = (roundOneReply?: string, waitRunId?: string) => {
+        if (!shouldRunA2A) {
+          return;
+        }
         void runSessionsSendA2AFlow({
           targetSessionKey: resolvedKey,
           displayKey,
@@ -253,6 +258,8 @@ export function createSessionsSendTool(opts?: {
       };
 
       if (timeoutSeconds === 0) {
+        // Fire-and-forget: send message without waiting for response
+        // A2A flow is NOT triggered for fire-and-forget sends (issue #7804)
         try {
           const response = await callGateway<{ runId: string }>({
             method: "agent",
@@ -262,7 +269,7 @@ export function createSessionsSendTool(opts?: {
           if (typeof response?.runId === "string" && response.runId) {
             runId = response.runId;
           }
-          startA2AFlow(undefined, runId);
+          // Note: A2A flow intentionally skipped for fire-and-forget mode
           return jsonResult({
             runId,
             status: "accepted",
