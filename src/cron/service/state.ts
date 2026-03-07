@@ -91,6 +91,24 @@ export type CronServiceDeps = {
     } & CronRunOutcome &
       CronRunTelemetry
   >;
+  /**
+   * Run a shell command for a cron job with payload.kind="command".
+   * Returns stdout, stderr, and exit code. Does not invoke an LLM.
+   */
+  runCronCommand?: (params: {
+    job: CronJob;
+    command: string;
+    timeout?: number;
+    cwd?: string;
+    env?: Record<string, string>;
+    shell?: string;
+    abortSignal?: AbortSignal;
+  }) => Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    durationMs: number;
+  }>;
   sendCronFailureAlert?: (params: {
     job: CronJob;
     text: string;

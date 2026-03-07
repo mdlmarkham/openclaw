@@ -1,3 +1,4 @@
+import { spawn } from "child_process";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import type { CliDeps } from "../cli/deps.js";
 import { createOutboundSendDeps } from "../cli/outbound-send-deps.js";
@@ -18,6 +19,7 @@ import {
 } from "../cron/run-log.js";
 import { CronService } from "../cron/service.js";
 import { resolveCronStorePath } from "../cron/store.js";
+import type { CronJob } from "../cron/types.js";
 import { normalizeHttpWebhookUrl } from "../cron/webhook-url.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
@@ -37,6 +39,88 @@ export type GatewayCronState = {
 };
 
 const CRON_WEBHOOK_TIMEOUT_MS = 10_000;
+const CRON_COMMAND_MAX_BUFFER = 10 * 1024 * 1024; // 10MB
+
+/**
+ * Execute a shell command for a cron job with payload.kind="command".
+ * Does not invoke an LLM - just runs the command and returns output.
+ */
+async function runCronCommand(params: {
+  job: CronJob;
+  command: string;
+  timeout?: number;
+  cwd?: string;
+  env?: Record<string, string>;
+  shell?: string;
+  abortSignal?: AbortSignal;
+}): Promise<{ stdout: string; stderr: string; exitCode: number; durationMs: number }> {
+  const timeoutMs = (params.timeout ?? 300) * 1000;
+  const startTime = Date.now();
+
+  return new Promise((resolve) => {
+    const shell = params.shell ?? "/bin/bash";
+    const env = { ...process.env, ...params.env };
+
+    const proc = spawn(shell, ["-c", params.command], {
+      cwd: params.cwd,
+      env,
+      timeout: timeoutMs,
+      maxBuffer: CRON_COMMAND_MAX_BUFFER,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on("close", (code) => {
+      resolve({
+        stdout: stdout.slice(0, CRON_COMMAND_MAX_BUFFER),
+        stderr: stderr.slice(0, CRON_COMMAND_MAX_BUFFER),
+        exitCode: code ?? 1,
+        durationMs: Date.now() - startTime,
+      });
+    });
+
+    proc.on("error", (err) => {
+      stderr += `Command execution error: ${err.message}`;
+      resolve({
+        stdout,
+        stderr,
+        exitCode: 1,
+        durationMs: Date.now() - startTime,
+      });
+    });
+
+    // Handle abort signal
+    if (params.abortSignal) {
+      if (params.abortSignal.aborted) {
+        proc.kill();
+        resolve({
+          stdout: "",
+          stderr: "Aborted before execution",
+          exitCode: 137, // SIGKILL
+          durationMs: Date.now() - startTime,
+        });
+      }
+      params.abortSignal.addEventListener("abort", () => {
+        proc.kill();
+        resolve({
+          stdout,
+          stderr: "Aborted during execution",
+          exitCode: 137,
+          durationMs: Date.now() - startTime,
+        });
+      });
+    }
+  });
+}
 
 function trimToOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -293,6 +377,17 @@ export function buildGatewayCronService(params: {
         agentId,
         sessionKey: `cron:${job.id}`,
         lane: "cron",
+      });
+    },
+    runCronCommand: async ({ job, command, timeout, cwd, env, shell, abortSignal }) => {
+      return await runCronCommand({
+        job,
+        command,
+        timeout,
+        cwd,
+        env,
+        shell,
+        abortSignal,
       });
     },
     sendCronFailureAlert: async ({ job, text, channel, to, mode, accountId }) => {

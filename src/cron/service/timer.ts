@@ -1040,6 +1040,77 @@ export async function executeJobCore(
     }
   }
 
+  // Handle command payload: shell execution without LLM
+  if (job.payload.kind === "command") {
+    if (abortSignal?.aborted) {
+      return resolveAbortError();
+    }
+
+    const runCronCommand = state.deps.runCronCommand;
+    if (!runCronCommand) {
+      return {
+        status: "error",
+        error: "command payload requires runCronCommand handler",
+      };
+    }
+
+    const result = await runCronCommand({
+      job,
+      command: job.payload.command,
+      timeout: job.payload.timeout,
+      cwd: job.payload.cwd,
+      env: job.payload.env,
+      shell: job.payload.shell,
+      abortSignal,
+    });
+
+    if (abortSignal?.aborted) {
+      return { status: "error", error: timeoutErrorMessage() };
+    }
+
+    // Determine if we should deliver based on exit code
+    const onExit = job.payload.onExit ?? "any";
+    const shouldDeliver =
+      onExit === "any" ||
+      (onExit === "success" && result.exitCode === 0) ||
+      (onExit === "failure" && result.exitCode !== 0);
+
+    // Hybrid mode: pass output to agent for analysis
+    if (job.payload.agentMessage && shouldDeliver) {
+      const agentInput = `${job.payload.agentMessage}\n\nOutput:\n${result.stdout}\n\nErrors:\n${result.stderr}`;
+
+      const res = await state.deps.runIsolatedAgentJob({
+        job,
+        message: agentInput,
+        abortSignal,
+      });
+
+      if (abortSignal?.aborted) {
+        return { status: "error", error: timeoutErrorMessage() };
+      }
+
+      return {
+        status: res.status,
+        error: res.error,
+        summary: res.summary,
+        exitCode: result.exitCode,
+        durationMs: result.durationMs,
+        ...res,
+      };
+    }
+
+    // Pure command mode: return output directly
+    return {
+      status: result.exitCode === 0 ? "ok" : "error",
+      error: result.exitCode !== 0 ? `Command exited with code ${result.exitCode}` : undefined,
+      summary: result.exitCode === 0 ? result.stdout.slice(0, 500) : result.stderr.slice(0, 500),
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      durationMs: result.durationMs,
+    };
+  }
+
   if (job.payload.kind !== "agentTurn") {
     return { status: "skipped", error: "isolated job requires payload.kind=agentTurn" };
   }
