@@ -81,6 +81,12 @@ export function registerCronAddCommand(cron: Command) {
       .option("--exact", "Disable cron staggering (set stagger to 0)", false)
       .option("--system-event <text>", "System event payload (main session)")
       .option("--message <text>", "Agent message payload")
+      .option("--command <cmd>", "Shell command to execute (zero-token cron)")
+      .option("--command-timeout <seconds>", "Command timeout in seconds (default: 300)")
+      .option("--command-cwd <path>", "Working directory for command")
+      .option("--command-shell <shell>", "Shell to use (bash|sh|zsh|auto, default: auto)")
+      .option("--command-exit <mode>", "When to deliver output (success|failure|any, default: any)")
+      .option("--command-analyze <prompt>", "Pass command output to agent for analysis")
       .option("--thinking <level>", "Thinking level for agent jobs (off|minimal|low|medium|high)")
       .option("--model <model>", "Model override for agent jobs (provider/model or alias)")
       .option("--timeout-seconds <n>", "Timeout seconds for agent jobs")
@@ -159,12 +165,50 @@ export function registerCronAddCommand(cron: Command) {
           const payload = (() => {
             const systemEvent = typeof opts.systemEvent === "string" ? opts.systemEvent.trim() : "";
             const message = typeof opts.message === "string" ? opts.message.trim() : "";
-            const chosen = [Boolean(systemEvent), Boolean(message)].filter(Boolean).length;
+            const command = typeof opts.command === "string" ? opts.command.trim() : "";
+            const chosen = [Boolean(systemEvent), Boolean(message), Boolean(command)].filter(
+              Boolean,
+            ).length;
             if (chosen !== 1) {
-              throw new Error("Choose exactly one payload: --system-event or --message");
+              throw new Error(
+                "Choose exactly one payload: --system-event, --message, or --command",
+              );
             }
             if (systemEvent) {
               return { kind: "systemEvent" as const, text: systemEvent };
+            }
+            if (command) {
+              const timeout = parsePositiveIntOrUndefined(opts.commandTimeout);
+              const onExitRaw =
+                typeof opts.commandExit === "string"
+                  ? opts.commandExit.trim().toLowerCase()
+                  : "any";
+              const onExit =
+                onExitRaw === "success" || onExitRaw === "failure" || onExitRaw === "any"
+                  ? onExitRaw
+                  : "any";
+              const shellRaw =
+                typeof opts.commandShell === "string"
+                  ? opts.commandShell.trim().toLowerCase()
+                  : "auto";
+              const shell =
+                shellRaw === "bash" ||
+                shellRaw === "sh" ||
+                shellRaw === "zsh" ||
+                shellRaw === "auto"
+                  ? shellRaw
+                  : "auto";
+              const agentMessage =
+                typeof opts.commandAnalyze === "string" ? opts.commandAnalyze.trim() : undefined;
+              return {
+                kind: "command" as const,
+                command,
+                timeout: timeout && Number.isFinite(timeout) ? timeout : undefined,
+                cwd: typeof opts.commandCwd === "string" ? opts.commandCwd.trim() : undefined,
+                shell,
+                onExit,
+                agentMessage,
+              };
             }
             const timeoutSeconds = parsePositiveIntOrUndefined(opts.timeoutSeconds);
             return {
@@ -188,7 +232,10 @@ export function registerCronAddCommand(cron: Command) {
               : () => undefined;
           const sessionSource = optionSource("session");
           const sessionTargetRaw = typeof opts.session === "string" ? opts.session.trim() : "";
-          const inferredSessionTarget = payload.kind === "agentTurn" ? "isolated" : "main";
+          const inferredSessionTarget =
+            payload.kind === "agentTurn" || (payload.kind === "command" && payload.agentMessage)
+              ? "isolated"
+              : "main";
           const sessionTarget =
             sessionSource === "cli" ? sessionTargetRaw || "" : inferredSessionTarget;
           if (sessionTarget !== "main" && sessionTarget !== "isolated") {
