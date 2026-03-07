@@ -29,12 +29,35 @@ export class SsrFBlockedError extends Error {
 
 export type LookupFn = typeof dnsLookup;
 
+/**
+ * SSRF policy for controlling access to private networks.
+ *
+ * `allowPrivateNetwork` options:
+ * - `true` / `dangerouslyAllowPrivateNetwork: true` — Allow all private network access (dangerous)
+ * - `false` — Block all private network access (default, safe)
+ * - `"confirm"` — Ask user before allowing (interactive approval required)
+ *
+ * Cloud metadata endpoints are always blocked, regardless of policy:
+ * - 169.254.169.254 (AWS/GCP/Azure metadata)
+ * - 100.100.100.200 (Alibaba metadata)
+ * - metadata.google.internal
+ */
 export type SsrFPolicy = {
-  allowPrivateNetwork?: boolean;
+  allowPrivateNetwork?: boolean | "confirm";
   dangerouslyAllowPrivateNetwork?: boolean;
   allowRfc2544BenchmarkRange?: boolean;
   allowedHostnames?: string[];
   hostnameAllowlist?: string[];
+};
+
+/**
+ * Cloud metadata endpoints that must never be accessed, even with
+ * dangerouslyAllowPrivateNetwork: true. These are security-critical
+ * blocklists that prevent credential exfiltration.
+ */
+const CLOUD_METADATA_BLOCKLIST = {
+  ipv4: ["169.254.169.254", "100.100.100.200"],
+  hostnames: new Set(["metadata.google.internal", "metadata", "metadata.azure.internal"]),
 };
 
 const BLOCKED_HOSTNAMES = new Set([
@@ -66,6 +89,70 @@ function normalizeHostnameAllowlist(values?: string[]): string[] {
 export function isPrivateNetworkAllowedByPolicy(policy?: SsrFPolicy): boolean {
   return policy?.dangerouslyAllowPrivateNetwork === true || policy?.allowPrivateNetwork === true;
 }
+
+/**
+ * Returns true if private network access requires interactive confirmation.
+ * This is the middle-ground between "allow all" and "deny all" policies.
+ */
+export function isSsrFConfirmRequiredByPolicy(policy?: SsrFPolicy): boolean {
+  return policy?.allowPrivateNetwork === "confirm";
+}
+
+/**
+ * Returns true if the address is a cloud metadata endpoint that must never be accessed.
+ * These are hardcoded for security and cannot be overridden by policy.
+ */
+export function isCloudMetadataAddress(address: string): boolean {
+  const normalized = address.trim().toLowerCase();
+
+  // Check hostnames
+  if (CLOUD_METADATA_BLOCKLIST.hostnames.has(normalized)) {
+    return true;
+  }
+
+  // Check IPv4 addresses
+  if (CLOUD_METADATA_BLOCKLIST.ipv4.includes(normalized)) {
+    return true;
+  }
+
+  // Check for any form of 169.254.169.254 (AWS/GCP/Azure metadata)
+  if (normalized === "169.254.169.254") {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Result of SSRF confirmation request when policy is "confirm".
+ * Used by browser/fetch tools to ask user permission for private network access.
+ */
+export type SsrFConfirmationRequest = {
+  /** The destination IP or hostname being accessed */
+  destination: string;
+  /** Port number (if applicable) */
+  port?: number;
+  /** Protocol being used */
+  protocol: "http" | "https";
+  /** Reason for the access (from agent context) */
+  reason?: string;
+  /** User who initiated the request (for audit) */
+  requestedBy?: string;
+  /** Timestamp of the request */
+  requestedAt: number;
+};
+
+/**
+ * Result of SSRF confirmation after user response.
+ */
+export type SsrFConfirmationResult = {
+  /** Whether the user approved the request */
+  approved: boolean;
+  /** Duration in milliseconds that approval is valid (if approved) */
+  validForMs?: number;
+  /** Timestamp when approval expires */
+  expiresAt?: number;
+};
 
 function resolveIpv4SpecialUseBlockOptions(policy?: SsrFPolicy): Ipv4SpecialUseBlockOptions {
   return {
@@ -153,6 +240,10 @@ export function isBlockedHostname(hostname: string): boolean {
 }
 
 function isBlockedHostnameNormalized(normalized: string): boolean {
+  // Always block cloud metadata endpoints
+  if (CLOUD_METADATA_BLOCKLIST.hostnames.has(normalized)) {
+    return true;
+  }
   if (BLOCKED_HOSTNAMES.has(normalized)) {
     return true;
   }
@@ -167,6 +258,10 @@ export function isBlockedHostnameOrIp(hostname: string, policy?: SsrFPolicy): bo
   const normalized = normalizeHostname(hostname);
   if (!normalized) {
     return false;
+  }
+  // Always block cloud metadata, regardless of policy
+  if (isCloudMetadataAddress(normalized)) {
+    return true;
   }
   return isBlockedHostnameNormalized(normalized) || isPrivateIpAddress(normalized, policy);
 }
