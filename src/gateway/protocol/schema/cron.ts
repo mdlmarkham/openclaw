@@ -116,6 +116,29 @@ export const CronScheduleSchema = Type.Union([
   ),
 ]);
 
+const CronCommandPayloadSchema = Type.Object(
+  {
+    kind: Type.Literal("command"),
+    command: Type.String({ minLength: 1, maxLength: 10000 }),
+    timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: 3600 })),
+    cwd: Type.Optional(Type.String({ maxLength: 4096 })),
+    env: Type.Optional(Type.Record(Type.String(), Type.String())),
+    shell: Type.Optional(
+      Type.Union([
+        Type.Literal("bash"),
+        Type.Literal("sh"),
+        Type.Literal("zsh"),
+        Type.Literal("auto"),
+      ]),
+    ),
+    onExit: Type.Optional(
+      Type.Union([Type.Literal("success"), Type.Literal("any"), Type.Literal("failure")]),
+    ),
+    agentMessage: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
 export const CronPayloadSchema = Type.Union([
   Type.Object(
     {
@@ -125,7 +148,31 @@ export const CronPayloadSchema = Type.Union([
     { additionalProperties: false },
   ),
   cronAgentTurnPayloadSchema({ message: NonEmptyString }),
+  CronCommandPayloadSchema,
 ]);
+
+const CronCommandPayloadPatchSchema = Type.Object(
+  {
+    kind: Type.Literal("command"),
+    command: Type.Optional(Type.String({ minLength: 1, maxLength: 10000 })),
+    timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: 3600 })),
+    cwd: Type.Optional(Type.String({ maxLength: 4096 })),
+    env: Type.Optional(Type.Record(Type.String(), Type.String())),
+    shell: Type.Optional(
+      Type.Union([
+        Type.Literal("bash"),
+        Type.Literal("sh"),
+        Type.Literal("zsh"),
+        Type.Literal("auto"),
+      ]),
+    ),
+    onExit: Type.Optional(
+      Type.Union([Type.Literal("success"), Type.Literal("any"), Type.Literal("failure")]),
+    ),
+    agentMessage: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
 
 export const CronPayloadPatchSchema = Type.Union([
   Type.Object(
@@ -136,6 +183,7 @@ export const CronPayloadPatchSchema = Type.Union([
     { additionalProperties: false },
   ),
   cronAgentTurnPayloadSchema({ message: Type.Optional(NonEmptyString) }),
+  CronCommandPayloadPatchSchema,
 ]);
 
 export const CronFailureAlertSchema = Type.Object(
@@ -355,6 +403,11 @@ export const CronRunLogEntrySchema = Type.Object(
       ),
     ),
     jobName: Type.Optional(Type.String()),
+    // Command execution fields
+    command: Type.Optional(Type.String()),
+    exitCode: Type.Optional(Type.Integer()),
+    stdout: Type.Optional(Type.String()),
+    stderr: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
