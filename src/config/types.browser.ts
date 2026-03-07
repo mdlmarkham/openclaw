@@ -15,8 +15,14 @@ export type BrowserSnapshotDefaults = {
   mode?: "efficient";
 };
 export type BrowserSsrFPolicyConfig = {
-  /** Legacy alias for private-network access. Prefer dangerouslyAllowPrivateNetwork. */
-  allowPrivateNetwork?: boolean;
+  /**
+   * Control private network access for browser navigation.
+   * - `true`: Allow all private network access (dangerous)
+   * - `false`: Block all private network access (safe, default when any policy set)
+   * - `"confirm"`: Ask user before allowing (interactive approval)
+   * Default: true when no policy configured (browser trusted-network mode)
+   */
+  allowPrivateNetwork?: boolean | "confirm";
   /** If true, permit browser navigation to private/internal networks. Default: true */
   dangerouslyAllowPrivateNetwork?: boolean;
   /**

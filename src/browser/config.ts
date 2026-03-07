@@ -104,6 +104,16 @@ function resolveBrowserSsrFPolicy(cfg: BrowserConfig | undefined): SsrFPolicy | 
   const hostnameAllowlist = normalizeStringList(cfg?.ssrfPolicy?.hostnameAllowlist);
   const hasExplicitPrivateSetting =
     allowPrivateNetwork !== undefined || dangerouslyAllowPrivateNetwork !== undefined;
+
+  // Handle "confirm" mode - pass through for confirmation flow
+  if (allowPrivateNetwork === "confirm") {
+    return {
+      allowPrivateNetwork: "confirm",
+      ...(allowedHostnames ? { allowedHostnames } : {}),
+      ...(hostnameAllowlist ? { hostnameAllowlist } : {}),
+    };
+  }
+
   // Browser defaults to trusted-network mode unless explicitly disabled by policy.
   const resolvedAllowPrivateNetwork =
     dangerouslyAllowPrivateNetwork === true ||
