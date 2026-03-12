@@ -2,7 +2,6 @@ import type { StreamFn } from "@mariozechner/pi-agent-core";
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { resolveProviderAttributionHeaders } from "../provider-attribution.js";
-import { streamWithPayloadPatch } from "./stream-payload-utils.js";
 const KILOCODE_FEATURE_HEADER = "X-KILOCODE-FEATURE";
 const KILOCODE_FEATURE_DEFAULT = "openclaw";
 const KILOCODE_FEATURE_ENV_VAR = "KILOCODE_FEATURE";
@@ -67,25 +66,30 @@ export function createOpenRouterSystemCacheWrapper(baseStreamFn: StreamFn | unde
       return underlying(model, context, options);
     }
 
-    return streamWithPayloadPatch(underlying, model, context, options, (payloadObj) => {
-      const messages = payloadObj.messages;
-      if (Array.isArray(messages)) {
-        for (const msg of messages as Array<{ role?: string; content?: unknown }>) {
-          if (msg.role !== "system" && msg.role !== "developer") {
-            continue;
-          }
-          if (typeof msg.content === "string") {
-            msg.content = [
-              { type: "text", text: msg.content, cache_control: { type: "ephemeral" } },
-            ];
-          } else if (Array.isArray(msg.content) && msg.content.length > 0) {
-            const last = msg.content[msg.content.length - 1];
-            if (last && typeof last === "object") {
-              (last as Record<string, unknown>).cache_control = { type: "ephemeral" };
+    const originalOnPayload = options?.onPayload;
+    return underlying(model, context, {
+      ...options,
+      onPayload: (payload) => {
+        const messages = (payload as Record<string, unknown>)?.messages;
+        if (Array.isArray(messages)) {
+          for (const msg of messages as Array<{ role?: string; content?: unknown }>) {
+            if (msg.role !== "system" && msg.role !== "developer") {
+              continue;
+            }
+            if (typeof msg.content === "string") {
+              msg.content = [
+                { type: "text", text: msg.content, cache_control: { type: "ephemeral" } },
+              ];
+            } else if (Array.isArray(msg.content) && msg.content.length > 0) {
+              const last = msg.content[msg.content.length - 1];
+              if (last && typeof last === "object") {
+                (last as Record<string, unknown>).cache_control = { type: "ephemeral" };
+              }
             }
           }
         }
-      }
+        return originalOnPayload?.(payload, model);
+      },
     });
   };
 }
@@ -96,22 +100,19 @@ export function createOpenRouterWrapper(
 ): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
   return (model, context, options) => {
+    const onPayload = options?.onPayload;
     const attributionHeaders = resolveProviderAttributionHeaders("openrouter");
-    return streamWithPayloadPatch(
-      underlying,
-      model,
-      context,
-      {
-        ...options,
-        headers: {
-          ...attributionHeaders,
-          ...options?.headers,
-        },
+    return underlying(model, context, {
+      ...options,
+      headers: {
+        ...attributionHeaders,
+        ...options?.headers,
       },
-      (payload) => {
+      onPayload: (payload) => {
         normalizeProxyReasoningPayload(payload, thinkingLevel);
+        return onPayload?.(payload);
       },
-    );
+    });
   };
 }
 
@@ -125,20 +126,17 @@ export function createKilocodeWrapper(
 ): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
   return (model, context, options) => {
-    return streamWithPayloadPatch(
-      underlying,
-      model,
-      context,
-      {
-        ...options,
-        headers: {
-          ...options?.headers,
-          ...resolveKilocodeAppHeaders(),
-        },
+    const onPayload = options?.onPayload;
+    return underlying(model, context, {
+      ...options,
+      headers: {
+        ...options?.headers,
+        ...resolveKilocodeAppHeaders(),
       },
-      (payload) => {
+      onPayload: (payload) => {
         normalizeProxyReasoningPayload(payload, thinkingLevel);
+        return onPayload?.(payload);
       },
-    );
+    });
   };
 }
