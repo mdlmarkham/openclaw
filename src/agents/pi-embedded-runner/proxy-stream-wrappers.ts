@@ -110,7 +110,7 @@ export function createOpenRouterWrapper(
       },
       onPayload: (payload) => {
         normalizeProxyReasoningPayload(payload, thinkingLevel);
-        return onPayload?.(payload);
+        return onPayload?.(payload, model);
       },
     });
   };
@@ -135,7 +135,7 @@ export function createKilocodeWrapper(
       },
       onPayload: (payload) => {
         normalizeProxyReasoningPayload(payload, thinkingLevel);
-        return onPayload?.(payload);
+        return onPayload?.(payload, model);
       },
     });
   };
