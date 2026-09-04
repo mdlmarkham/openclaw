@@ -1,5 +1,6 @@
-import type { OpenClawConfig } from "./types.js";
+// Normalizes path-like config values to canonical user paths.
 import { isPlainObject, resolveUserPath } from "../utils.js";
+import type { OpenClawConfig } from "./types.js";
 
 const PATH_VALUE_RE = /^~(?=$|[\\/])/;
 

@@ -1,8 +1,11 @@
-import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
+// Shared JSON state helpers for pairing namespaces.
 import path from "node:path";
+import { asNonArrayRecord } from "@openclaw/normalization-core/record-coerce";
 import { resolveStateDir } from "../config/paths.js";
 
+export { createAsyncLock, readJsonIfExists } from "./json-files.js";
+
+/** Resolve pending/paired JSON file locations for one pairing namespace. */
 export function resolvePairingPaths(baseDir: string | undefined, subdir: string) {
   const root = baseDir ?? resolveStateDir();
   const dir = path.join(root, subdir);
@@ -13,58 +16,22 @@ export function resolvePairingPaths(baseDir: string | undefined, subdir: string)
   };
 }
 
-export async function readJsonFile<T>(filePath: string): Promise<T | null> {
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
+/** Coerce persisted pairing maps, treating malformed arrays/scalars as empty state. */
+export function coercePairingStateRecord<T>(value: unknown): Record<string, T> {
+  return asNonArrayRecord(value) as Record<string, T>;
 }
 
-export async function writeJsonAtomic(filePath: string, value: unknown) {
-  const dir = path.dirname(filePath);
-  await fs.mkdir(dir, { recursive: true });
-  const tmp = `${filePath}.${randomUUID()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
-  try {
-    await fs.chmod(tmp, 0o600);
-  } catch {
-    // best-effort; ignore on platforms without chmod
-  }
-  await fs.rename(tmp, filePath);
-  try {
-    await fs.chmod(filePath, 0o600);
-  } catch {
-    // best-effort; ignore on platforms without chmod
-  }
-}
-
-export function pruneExpiredPending<T extends { ts: number }>(
+/** Remove pending requests older than the caller's pairing TTL. */
+export function pruneExpiredPending<T extends { ts: number; refreshedAtMs?: number }>(
   pendingById: Record<string, T>,
   nowMs: number,
   ttlMs: number,
 ) {
   for (const [id, req] of Object.entries(pendingById)) {
-    if (nowMs - req.ts > ttlMs) {
+    // refreshedAtMs is a TTL keepalive: expiry counts from the device's last
+    // re-request, while ts stays the creation time for approval ordering.
+    if (nowMs - (req.refreshedAtMs ?? req.ts) > ttlMs) {
       delete pendingById[id];
     }
   }
-}
-
-export function createAsyncLock() {
-  let lock: Promise<void> = Promise.resolve();
-  return async function withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const prev = lock;
-    let release: (() => void) | undefined;
-    lock = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      release?.();
-    }
-  };
 }

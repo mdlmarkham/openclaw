@@ -1,39 +1,64 @@
-import { describe, expect, it } from "vitest";
+// Provider utility tests cover provider normalization and utility behavior.
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { resolveProviderReasoningOutputModeWithPluginMock } = vi.hoisted(() => ({
+  resolveProviderReasoningOutputModeWithPluginMock: vi.fn(),
+}));
+
+vi.mock("../plugins/provider-runtime.js", () => ({
+  resolveProviderReasoningOutputModeWithPlugin: resolveProviderReasoningOutputModeWithPluginMock,
+}));
+
 import { isReasoningTagProvider } from "./provider-utils.js";
 
 describe("isReasoningTagProvider", () => {
-  it("returns false for ollama - native reasoning field, no tags needed (#2279)", () => {
-    expect(isReasoningTagProvider("ollama")).toBe(false);
-    expect(isReasoningTagProvider("Ollama")).toBe(false);
+  beforeEach(() => {
+    resolveProviderReasoningOutputModeWithPluginMock.mockReset();
+    resolveProviderReasoningOutputModeWithPluginMock.mockReturnValue(undefined);
   });
 
-  it("returns true for google-gemini-cli", () => {
-    expect(isReasoningTagProvider("google-gemini-cli")).toBe(true);
+  it("falls back to provider hooks for unknown providers", () => {
+    resolveProviderReasoningOutputModeWithPluginMock.mockReturnValue("tagged");
+
+    expect(
+      isReasoningTagProvider("custom-provider", {
+        workspaceDir: process.cwd(),
+        modelId: "custom/model",
+      }),
+    ).toBe(true);
+    expect(resolveProviderReasoningOutputModeWithPluginMock).toHaveBeenCalledTimes(1);
   });
 
-  it("returns true for google-generative-ai", () => {
-    expect(isReasoningTagProvider("google-generative-ai")).toBe(true);
+  it("returns native when hooks do not provide an override", () => {
+    expect(isReasoningTagProvider("custom-provider")).toBe(false);
+    expect(resolveProviderReasoningOutputModeWithPluginMock).toHaveBeenCalledTimes(1);
   });
 
-  it("returns true for google-antigravity", () => {
-    expect(isReasoningTagProvider("google-antigravity")).toBe(true);
-    expect(isReasoningTagProvider("google-antigravity/gemini-3")).toBe(true);
+  it.each([
+    ["google-generative-ai", false],
+    [null, false],
+    [undefined, false],
+    ["", false],
+  ] as const)("returns %s for %s", (value, expected) => {
+    expect(isReasoningTagProvider(value, { workspaceDir: process.cwd() })).toBe(expected);
   });
 
-  it("returns true for minimax", () => {
-    expect(isReasoningTagProvider("minimax")).toBe(true);
-    expect(isReasoningTagProvider("minimax-cn")).toBe(true);
-  });
+  it.each([
+    ["google", true],
+    ["Google", true],
+    ["google-gemini-cli", true],
+    ["anthropic", false],
+    ["openai", false],
+    ["openrouter", false],
+    ["ollama", false],
+    ["minimax", false],
+    ["minimax-cn", false],
+  ] as const)("uses provider hooks when available for %s", (value, expected) => {
+    resolveProviderReasoningOutputModeWithPluginMock.mockReturnValueOnce(
+      expected ? "tagged" : "native",
+    );
 
-  it("returns false for null/undefined/empty", () => {
-    expect(isReasoningTagProvider(null)).toBe(false);
-    expect(isReasoningTagProvider(undefined)).toBe(false);
-    expect(isReasoningTagProvider("")).toBe(false);
-  });
-
-  it("returns false for standard providers", () => {
-    expect(isReasoningTagProvider("anthropic")).toBe(false);
-    expect(isReasoningTagProvider("openai")).toBe(false);
-    expect(isReasoningTagProvider("openrouter")).toBe(false);
+    expect(isReasoningTagProvider(value, { workspaceDir: process.cwd() })).toBe(expected);
+    expect(resolveProviderReasoningOutputModeWithPluginMock).toHaveBeenCalledTimes(1);
   });
 });

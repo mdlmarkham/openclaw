@@ -1,3 +1,4 @@
+// Defines hook-related Zod schema fragments for config parsing.
 import path from "node:path";
 import { z } from "zod";
 import { sensitive } from "./zod-schema.sensitive.js";
@@ -44,23 +45,19 @@ export const HookMappingSchema = z
     name: z.string().optional(),
     agentId: z.string().optional(),
     sessionKey: z.string().optional().register(sensitive),
+    sessionMode: z.union([z.literal("isolated"), z.literal("persistent")]).optional(),
     messageTemplate: z.string().optional(),
     textTemplate: z.string().optional(),
+    forEach: z
+      .string()
+      .regex(/^[^.[\]]+$/, "forEach must be a top-level payload key")
+      .optional(),
     deliver: z.boolean().optional(),
     allowUnsafeExternalContent: z.boolean().optional(),
-    channel: z
-      .union([
-        z.literal("last"),
-        z.literal("whatsapp"),
-        z.literal("telegram"),
-        z.literal("discord"),
-        z.literal("irc"),
-        z.literal("slack"),
-        z.literal("signal"),
-        z.literal("imessage"),
-        z.literal("msteams"),
-      ])
-      .optional(),
+    // Keep this open-ended so runtime channel plugins (for example feishu) can be
+    // referenced without hard-coding every channel id in the config schema.
+    // Runtime still validates the resolved value against currently registered channels.
+    channel: z.string().trim().min(1).optional(),
     to: z.string().optional(),
     model: z.string().optional(),
     thinking: z.string().optional(),
@@ -76,14 +73,6 @@ export const HookMappingSchema = z
   .strict()
   .optional();
 
-export const InternalHookHandlerSchema = z
-  .object({
-    event: z.string(),
-    module: SafeRelativeModulePathSchema,
-    export: z.string().optional(),
-  })
-  .strict();
-
 const HookConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -94,22 +83,9 @@ const HookConfigSchema = z
   // whole config invalid (which triggers doctor/best-effort loads).
   .passthrough();
 
-const HookInstallRecordSchema = z
-  .object({
-    source: z.union([z.literal("npm"), z.literal("archive"), z.literal("path")]),
-    spec: z.string().optional(),
-    sourcePath: z.string().optional(),
-    installPath: z.string().optional(),
-    version: z.string().optional(),
-    installedAt: z.string().optional(),
-    hooks: z.array(z.string()).optional(),
-  })
-  .strict();
-
 export const InternalHooksSchema = z
   .object({
     enabled: z.boolean().optional(),
-    handlers: z.array(InternalHookHandlerSchema).optional(),
     entries: z.record(z.string(), HookConfigSchema).optional(),
     load: z
       .object({
@@ -117,7 +93,6 @@ export const InternalHooksSchema = z
       })
       .strict()
       .optional(),
-    installs: z.record(z.string(), HookInstallRecordSchema).optional(),
   })
   .strict()
   .optional();

@@ -1,29 +1,40 @@
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+// Models gateway methods expose prepared, cached, and explicitly refreshed catalog views.
+import { validateModelsListParams } from "../../../packages/gateway-protocol/src/index.js";
+import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
+import { resolveAgentIdOrRespondError } from "./agent-id-shared.js";
+import { buildModelsListResult } from "./models-list-result.js";
 import type { GatewayRequestHandlers } from "./types.js";
-import {
-  ErrorCodes,
-  errorShape,
-  formatValidationErrors,
-  validateModelsListParams,
-} from "../protocol/index.js";
+import { resolveAuthenticatedProfileId } from "./users-profile-access.js";
+import { assertValidParams } from "./validation.js";
 
+export { buildModelsListResult };
+
+// Automatic clients opt into preparedOnly; omitted mode preserves shipped wildcard discovery.
 export const modelsHandlers: GatewayRequestHandlers = {
-  "models.list": async ({ params, respond, context }) => {
-    if (!validateModelsListParams(params)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid models.list params: ${formatValidationErrors(validateModelsListParams.errors)}`,
-        ),
-      );
+  "models.list": async ({ params, respond, context, client }) => {
+    if (!assertValidParams(params, validateModelsListParams, "models.list", respond)) {
       return;
     }
-    try {
-      const models = await context.loadGatewayModelCatalog();
-      respond(true, { models }, undefined);
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
+    const cfg = context.getRuntimeConfig();
+    const resolved = resolveAgentIdOrRespondError({
+      rawAgentId: params.agentId ?? tryResolveAmbientOwnerAgentId(cfg),
+      respond,
+      cfg,
+      normalize: normalizeOptionalString,
+    });
+    if (!resolved) {
+      return;
     }
+    respond(
+      true,
+      await buildModelsListResult({
+        context,
+        agentId: resolved.agentId,
+        params,
+        requesterProfileId: resolveAuthenticatedProfileId(client),
+      }),
+      undefined,
+    );
   },
 };

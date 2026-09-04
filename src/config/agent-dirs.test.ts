@@ -1,12 +1,28 @@
+// Covers agent directory resolution across config and environment overrides.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "./types.js";
 import { findDuplicateAgentDirs } from "./agent-dirs.js";
+import type { OpenClawConfig } from "./types.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
 describe("resolveEffectiveAgentDir via findDuplicateAgentDirs", () => {
+  it("finds duplicate explicit dirs in keyed agent entries", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        entries: {
+          alpha: { default: true, agentDir: "/srv/shared-agent" },
+          beta: { agentDir: "/srv/shared-agent" },
+        },
+      },
+    };
+
+    expect(findDuplicateAgentDirs(cfg)).toEqual([
+      { agentDir: "/srv/shared-agent", agentIds: ["alpha", "beta"] },
+    ]);
+  });
+
   it("uses OPENCLAW_HOME for default agent dir resolution", () => {
     // findDuplicateAgentDirs calls resolveEffectiveAgentDir internally.
     // With a single agent there are no duplicates, but we can inspect the

@@ -1,3 +1,17 @@
+// Hook frontmatter helpers parse metadata blocks from hook files.
+import { readStringValue } from "@openclaw/normalization-core/string-coerce";
+import { parseFrontmatterBlock } from "../../packages/markdown-core/src/frontmatter.js";
+import {
+  applyOpenClawManifestInstallCommonFields,
+  getFrontmatterString,
+  normalizeStringList,
+  parseOpenClawManifestInstallBase,
+  parseFrontmatterBool,
+  resolveOpenClawManifestBlock,
+  resolveOpenClawManifestInstall,
+  resolveOpenClawManifestOs,
+  resolveOpenClawManifestRequires,
+} from "../shared/frontmatter.js";
 import type {
   OpenClawHookMetadata,
   HookEntry,
@@ -5,44 +19,24 @@ import type {
   HookInvocationPolicy,
   ParsedHookFrontmatter,
 } from "./types.js";
-import { parseFrontmatterBlock } from "../markdown/frontmatter.js";
-import {
-  getFrontmatterString,
-  normalizeStringList,
-  parseFrontmatterBool,
-  resolveOpenClawManifestBlock,
-} from "../shared/frontmatter.js";
 
-export function parseFrontmatter(content: string): ParsedHookFrontmatter {
+/** Parse HOOK.md frontmatter into the generic hook frontmatter record. */
+export function parseHookFrontmatter(content: string): ParsedHookFrontmatter {
   return parseFrontmatterBlock(content);
 }
 
 function parseInstallSpec(input: unknown): HookInstallSpec | undefined {
-  if (!input || typeof input !== "object") {
+  const parsed = parseOpenClawManifestInstallBase(input, ["bundled", "npm", "git"]);
+  if (!parsed) {
     return undefined;
   }
-  const raw = input as Record<string, unknown>;
-  const kindRaw =
-    typeof raw.kind === "string" ? raw.kind : typeof raw.type === "string" ? raw.type : "";
-  const kind = kindRaw.trim().toLowerCase();
-  if (kind !== "bundled" && kind !== "npm" && kind !== "git") {
-    return undefined;
-  }
-
-  const spec: HookInstallSpec = {
-    kind: kind,
-  };
-
-  if (typeof raw.id === "string") {
-    spec.id = raw.id;
-  }
-  if (typeof raw.label === "string") {
-    spec.label = raw.label;
-  }
-  const bins = normalizeStringList(raw.bins);
-  if (bins.length > 0) {
-    spec.bins = bins;
-  }
+  const { raw } = parsed;
+  const spec = applyOpenClawManifestInstallCommonFields<HookInstallSpec>(
+    {
+      kind: parsed.kind as HookInstallSpec["kind"],
+    },
+    parsed,
+  );
   if (typeof raw.package === "string") {
     spec.package = raw.package;
   }
@@ -53,43 +47,32 @@ function parseInstallSpec(input: unknown): HookInstallSpec | undefined {
   return spec;
 }
 
-export function resolveOpenClawMetadata(
+/** Resolve OpenClaw hook metadata from the manifest block in HOOK.md frontmatter. */
+export function resolveHookManifestMetadata(
   frontmatter: ParsedHookFrontmatter,
 ): OpenClawHookMetadata | undefined {
   const metadataObj = resolveOpenClawManifestBlock({ frontmatter });
   if (!metadataObj) {
     return undefined;
   }
-  const requiresRaw =
-    typeof metadataObj.requires === "object" && metadataObj.requires !== null
-      ? (metadataObj.requires as Record<string, unknown>)
-      : undefined;
-  const installRaw = Array.isArray(metadataObj.install) ? (metadataObj.install as unknown[]) : [];
-  const install = installRaw
-    .map((entry) => parseInstallSpec(entry))
-    .filter((entry): entry is HookInstallSpec => Boolean(entry));
-  const osRaw = normalizeStringList(metadataObj.os);
+  const requires = resolveOpenClawManifestRequires(metadataObj);
+  const install = resolveOpenClawManifestInstall(metadataObj, parseInstallSpec);
+  const osRaw = resolveOpenClawManifestOs(metadataObj);
   const eventsRaw = normalizeStringList(metadataObj.events);
   return {
     always: typeof metadataObj.always === "boolean" ? metadataObj.always : undefined,
-    emoji: typeof metadataObj.emoji === "string" ? metadataObj.emoji : undefined,
-    homepage: typeof metadataObj.homepage === "string" ? metadataObj.homepage : undefined,
-    hookKey: typeof metadataObj.hookKey === "string" ? metadataObj.hookKey : undefined,
-    export: typeof metadataObj.export === "string" ? metadataObj.export : undefined,
+    emoji: readStringValue(metadataObj.emoji),
+    homepage: readStringValue(metadataObj.homepage),
+    hookKey: readStringValue(metadataObj.hookKey),
+    export: readStringValue(metadataObj.export),
     os: osRaw.length > 0 ? osRaw : undefined,
     events: eventsRaw.length > 0 ? eventsRaw : [],
-    requires: requiresRaw
-      ? {
-          bins: normalizeStringList(requiresRaw.bins),
-          anyBins: normalizeStringList(requiresRaw.anyBins),
-          env: normalizeStringList(requiresRaw.env),
-          config: normalizeStringList(requiresRaw.config),
-        }
-      : undefined,
+    requires,
     install: install.length > 0 ? install : undefined,
   };
 }
 
+/** Resolve invocation policy from top-level hook frontmatter flags. */
 export function resolveHookInvocationPolicy(
   frontmatter: ParsedHookFrontmatter,
 ): HookInvocationPolicy {
@@ -98,6 +81,7 @@ export function resolveHookInvocationPolicy(
   };
 }
 
+/** Resolve the config key for a hook, honoring metadata hookKey overrides. */
 export function resolveHookKey(hookName: string, entry?: HookEntry): string {
   return entry?.metadata?.hookKey ?? hookName;
 }

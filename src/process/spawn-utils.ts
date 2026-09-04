@@ -1,22 +1,26 @@
+// Spawn utilities configure child processes and normalize spawned process handles.
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn } from "node:child_process";
+import { expectDefined } from "@openclaw/normalization-core";
+import { toErrorObject } from "../infra/errors.js";
 
-export type SpawnFallback = {
+type SpawnFallback = {
   label: string;
   options: SpawnOptions;
 };
 
-export type SpawnWithFallbackResult = {
+type SpawnWithFallbackResult = {
   child: ChildProcess;
   usedFallback: boolean;
   fallbackLabel?: string;
 };
 
 type SpawnWithFallbackParams = {
+  assertCurrent?: () => void;
   argv: string[];
   options: SpawnOptions;
   fallbacks?: SpawnFallback[];
-  spawnImpl?: typeof spawn;
+  spawnImpl?: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
   retryCodes?: string[];
   onFallback?: (err: unknown, fallback: SpawnFallback) => void;
 };
@@ -31,28 +35,6 @@ export function resolveCommandStdio(params: {
   return [stdin, "pipe", "pipe"];
 }
 
-export function formatSpawnError(err: unknown): string {
-  if (!(err instanceof Error)) {
-    return String(err);
-  }
-  const details = err as NodeJS.ErrnoException;
-  const parts: string[] = [];
-  const message = err.message?.trim();
-  if (message) {
-    parts.push(message);
-  }
-  if (details.code && !message?.includes(details.code)) {
-    parts.push(details.code);
-  }
-  if (details.syscall) {
-    parts.push(`syscall=${details.syscall}`);
-  }
-  if (typeof details.errno === "number") {
-    parts.push(`errno=${details.errno}`);
-  }
-  return parts.join(" ");
-}
-
 function shouldRetry(err: unknown, codes: string[]): boolean {
   const code =
     err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code) : "";
@@ -60,11 +42,11 @@ function shouldRetry(err: unknown, codes: string[]): boolean {
 }
 
 async function spawnAndWaitForSpawn(
-  spawnImpl: typeof spawn,
+  spawnImpl: NonNullable<SpawnWithFallbackParams["spawnImpl"]>,
   argv: string[],
   options: SpawnOptions,
 ): Promise<ChildProcess> {
-  const child = spawnImpl(argv[0], argv.slice(1), options);
+  const child = spawnImpl(expectDefined(argv[0], "argv entry at 0"), argv.slice(1), options);
 
   return await new Promise((resolve, reject) => {
     let settled = false;
@@ -86,7 +68,7 @@ async function spawnAndWaitForSpawn(
       }
       settled = true;
       cleanup();
-      reject(err);
+      reject(toErrorObject(err, "Non-Error rejection"));
     };
     const onSpawn = () => {
       finishResolve();
@@ -118,8 +100,9 @@ export async function spawnWithFallback(
   ];
 
   let lastError: unknown;
-  for (let index = 0; index < attempts.length; index += 1) {
-    const attempt = attempts[index];
+  for (const [index, attempt] of attempts.entries()) {
+    // Caller revocation is not a spawn failure and cannot select a fallback.
+    params.assertCurrent?.();
     try {
       const child = await spawnAndWaitForSpawn(spawnImpl, params.argv, attempt.options);
       return {

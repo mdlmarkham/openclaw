@@ -1,13 +1,13 @@
 import AppKit
-import OpenClawKit
 import Foundation
+import OpenClawKit
 import OSLog
 import Security
 
 private let deepLinkLogger = Logger(subsystem: "ai.openclaw", category: "DeepLink")
 
 enum DeepLinkAgentPolicy {
-    static let maxMessageChars = 20_000
+    static let maxMessageChars = 20000
     static let maxUnkeyedConfirmChars = 240
 
     enum ValidationError: Error, Equatable, LocalizedError {
@@ -16,7 +16,7 @@ enum DeepLinkAgentPolicy {
         var errorDescription: String? {
             switch self {
             case let .messageTooLongForConfirmation(max, actual):
-                return "Message is too long to confirm safely (\(actual) chars; max \(max) without key)."
+                "Message is too long to confirm safely (\(actual) chars; max \(max) without key)."
             }
         }
     }
@@ -48,26 +48,43 @@ final class DeepLinkHandler {
     static let shared = DeepLinkHandler()
 
     private var lastPromptAt: Date = .distantPast
+    private let gatewaySetup: @MainActor (GatewayConnectDeepLink) -> Void
 
-    // Ephemeral, in-memory key used for unattended deep links originating from the in-app Canvas.
-    // This avoids blocking Canvas init on UserDefaults and doesn't weaken the external deep-link prompt:
-    // outside callers can't know this randomly generated key.
+    /// Ephemeral, in-memory key used for unattended deep links originating from the in-app Canvas.
+    /// This avoids blocking Canvas init on UserDefaults and doesn't weaken the external deep-link prompt:
+    /// outside callers can't know this randomly generated key.
     private nonisolated static let canvasUnattendedKey: String = DeepLinkHandler.generateRandomKey()
+
+    init(gatewaySetup: @escaping @MainActor (GatewayConnectDeepLink) -> Void = { link in
+        DashboardManager.shared.handleGatewaySetup(link)
+    }) {
+        self.gatewaySetup = gatewaySetup
+    }
 
     func handle(url: URL) async {
         guard let route = DeepLinkParser.parse(url) else {
-            deepLinkLogger.debug("ignored url \(url.absoluteString, privacy: .public)")
+            deepLinkLogger.debug("ignored deep link \(Self.invalidRouteMetadata(url), privacy: .public)")
             return
         }
-        guard !AppStateStore.shared.isPaused else {
-            self.presentAlert(title: "OpenClaw is paused", message: "Unpause OpenClaw to run agent actions.")
-            return
-        }
-
         switch route {
+        case .dashboard:
+            await self.openDashboard()
+            return
         case let .agent(link):
+            guard !AppStateStore.shared.isPaused else {
+                self.presentAlert(title: "OpenClaw is paused", message: "Unpause OpenClaw to run agent actions.")
+                return
+            }
             await self.handleAgent(link: link, originalURL: url)
+        case let .gateway(link):
+            self.gatewaySetup(link)
         }
+    }
+
+    static func invalidRouteMetadata(_ url: URL) -> String {
+        let scheme = url.scheme?.lowercased() ?? "missing"
+        let route = url.host?.lowercased() ?? "missing"
+        return "scheme=\(scheme) route=\(route)"
     }
 
     private func handleAgent(link: AgentDeepLink, originalURL: URL) async {
@@ -142,12 +159,8 @@ final class DeepLinkHandler {
         self.expectedKey()
     }
 
-    static func currentCanvasKey() -> String {
-        self.canvasUnattendedKey
-    }
-
     private static func expectedKey() -> String {
-        let defaults = UserDefaults.standard
+        let defaults = AppDefaults.standard
         if let key = defaults.string(forKey: deepLinkKeyKey), !key.isEmpty {
             return key
         }
@@ -175,6 +188,10 @@ final class DeepLinkHandler {
     }
 
     // MARK: - UI
+
+    private func openDashboard() async {
+        AppNavigationActions.openDashboard()
+    }
 
     private func confirm(title: String, message: String) -> Bool {
         let alert = NSAlert()

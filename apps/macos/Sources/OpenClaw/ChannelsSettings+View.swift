@@ -2,57 +2,79 @@ import SwiftUI
 
 extension ChannelsSettings {
     var body: some View {
-        HStack(spacing: 0) {
-            self.sidebar
+        let channels = self.orderedChannels
+        return HStack(spacing: 0) {
+            self.sidebar(channels: channels)
             self.detail
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .settingsDetailContent()
         .onAppear {
-            self.store.start()
-            self.ensureSelection()
+            self.updateActiveWork(active: self.isActive)
+            self.ensureSelection(in: channels)
         }
-        .onChange(of: self.orderedChannels) { _, _ in
-            self.ensureSelection()
+        .onChange(of: self.isActive) { _, active in
+            self.updateActiveWork(active: active)
         }
-        .onDisappear { self.store.stop() }
+        .onChange(of: channels) { _, newValue in
+            self.ensureSelection(in: newValue)
+        }
+        .onDisappear { self.updateActiveWork(active: false) }
     }
 
-    private var sidebar: some View {
-        ScrollView {
+    private func updateActiveWork(active: Bool) {
+        guard self.activeWork != active else { return }
+        self.activeWork = active
+        if active {
+            self.store.start()
+        } else {
+            self.store.stop()
+        }
+    }
+
+    private func sidebar(channels: [ChannelItem]) -> some View {
+        let enabled = channels.filter { self.channelEnabled($0) }
+        let available = channels.filter { !self.channelEnabled($0) }
+
+        return SettingsSidebarScroll {
             LazyVStack(alignment: .leading, spacing: 8) {
-                if !self.enabledChannels.isEmpty {
+                if !enabled.isEmpty {
                     self.sidebarSectionHeader("Configured")
-                    ForEach(self.enabledChannels) { channel in
+                    ForEach(enabled) { channel in
                         self.sidebarRow(channel)
                     }
                 }
 
-                if !self.availableChannels.isEmpty {
+                if !available.isEmpty {
                     self.sidebarSectionHeader("Available")
-                    ForEach(self.availableChannels) { channel in
+                    ForEach(available) { channel in
                         self.sidebarRow(channel)
                     }
                 }
             }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 10)
         }
-        .frame(minWidth: 220, idealWidth: 240, maxWidth: 280, maxHeight: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor)))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var detail: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 0) {
+            if self.store.isAcquiringSource {
+                ProgressView().controlSize(.small)
+            }
+            if let error = self.store.lastError {
+                Text(error)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, SettingsLayout.detailHorizontalPadding)
+                    .padding(.top, SettingsLayout.detailVerticalPadding)
+            }
             if let channel = self.selectedChannel {
                 self.channelDetail(channel)
             } else {
                 self.emptyDetail
             }
         }
-        .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .layoutPriority(1)
     }
 
     private var emptyDetail: some View {
@@ -63,8 +85,8 @@ extension ChannelsSettings {
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.horizontal, SettingsLayout.detailHorizontalPadding)
+        .padding(.vertical, SettingsLayout.detailVerticalPadding)
     }
 
     private func channelDetail(_ channel: ChannelItem) -> some View {
@@ -76,8 +98,8 @@ extension ChannelsSettings {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 18)
+            .padding(.horizontal, SettingsLayout.detailHorizontalPadding)
+            .padding(.vertical, SettingsLayout.detailVerticalPadding)
         }
     }
 
@@ -127,12 +149,12 @@ extension ChannelsSettings {
                 self.statusBadge(
                     self.channelSummary(channel),
                     color: self.channelTint(channel))
-                Spacer()
+                Spacer(minLength: 12)
                 self.channelHeaderActions(channel)
             }
 
             HStack(spacing: 10) {
-                Text("Last check \(self.channelLastCheckText(channel))")
+                Text(String(format: String(localized: "Last check %@"), self.channelLastCheckText(channel)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if self.channelHasError(channel) {
