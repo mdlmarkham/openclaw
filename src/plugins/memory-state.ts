@@ -39,6 +39,7 @@ export type {
   MemoryPluginRuntime,
   MemoryPromptSectionBuilder,
   MemoryPromptSectionParams,
+  MemoryPromptSectionPreparer,
   PreparedMemoryPromptSection,
   RegisteredMemorySearchManager,
 } from "./registry-contribution-types.js";

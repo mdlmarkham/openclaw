@@ -344,7 +344,12 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: owner-selected channel groups and their authored config path for safe recovery hints.
       // +1: canonical conversation-to-session binding read for native channel controls.
       // +1: final callable-tool availability projection for native harnesses.
-      4377,
+      // +3: functional memory prompt seam exports for non-channel tool plugins
+      //     (registerMemoryPromptSupplement, registerMemoryPromptPreparation,
+      //     MemoryPromptSectionPreparer) — the api-object methods are no-op
+      //     stubs outside setup-runtime load mode, so tool plugins could not
+      //     contribute bootstrap prompt sections.
+      4380,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -463,7 +468,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: owner-selected channel groups and their authored config path for safe recovery hints.
       // +1: canonical conversation-to-session binding read for native channel controls.
       // +1: final callable-tool availability projection for native harnesses.
-      2610,
+      // +2: memory prompt supplement/preparation registration for non-channel
+      //     tool plugins — api-object equivalents are setup-runtime-only stubs.
+      2612,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(

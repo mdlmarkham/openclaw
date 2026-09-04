@@ -10,15 +10,20 @@ import {
   createPluginStateKeyedStore,
   resetPluginStateStoreForTests,
 } from "../plugin-state/plugin-state-store.js";
+import { prepareMemoryPromptSection } from "../plugins/memory-state.js";
 import {
   clearMemoryPluginState,
   registerMemoryCapability,
   registerTestMemoryPromptBuilder,
 } from "../plugins/memory-state.test-fixtures.js";
+import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import { withPluginRegistrationContext } from "../plugins/runtime.js";
 import {
   buildActiveMemoryPromptSection,
   listMemoryHostPublicArtifacts,
   listActiveMemoryPublicArtifacts,
+  registerMemoryPromptPreparation,
+  registerMemoryPromptSupplement,
 } from "./memory-host-core.js";
 import { appendMemoryHostEvent } from "./memory-host-events.js";
 
@@ -47,6 +52,61 @@ describe("memory-host-core helpers", () => {
         citationsMode: "off",
       }),
     ).toEqual(["## Memory Recall", "citations=off", ""]);
+  });
+
+  // Tool plugins load in "full"/"discovery"/"tool-discovery" modes (never
+  // "setup-runtime"), so the api-object prompt seam methods are no-op stubs
+  // for them on builds where the memory handlers were gated behind
+  // setup-runtime. The direct SDK imports must therefore be functional —
+  // these tests pin the public export surface (OHM #2417).
+  it("exposes a functional prompt supplement seam for non-channel tool plugins", () => {
+    registerMemoryPromptSupplement("ohm-tools", () => [
+      "<ohm_recent_conclusions>",
+      "recent conclusions live here",
+      "</ohm_recent_conclusions>",
+    ]);
+
+    expect(
+      buildActiveMemoryPromptSection({
+        availableTools: new Set(["memory_search"]),
+        citationsMode: "off",
+      }),
+    ).toEqual([
+      "<ohm_recent_conclusions>",
+      "recent conclusions live here",
+      "</ohm_recent_conclusions>",
+    ]);
+  });
+
+  it("exposes a functional prompt preparation seam for non-channel tool plugins", async () => {
+    registerMemoryPromptPreparation("ohm-tools", async ({ availableTools }) => {
+      if (!availableTools.has("memory_search")) {
+        return [];
+      }
+      return ["<ohm_recent_conclusions>", "prepared conclusions", "</ohm_recent_conclusions>"];
+    });
+
+    const prepared = await prepareMemoryPromptSection({
+      availableTools: new Set(["memory_search"]),
+      citationsMode: "off",
+    });
+    expect(prepared.lines).toEqual([
+      "<ohm_recent_conclusions>",
+      "prepared conclusions",
+      "</ohm_recent_conclusions>",
+    ]);
+  });
+
+  it("attributes direct prompt seam registrations to the synchronous plugin owner", () => {
+    const building = createEmptyPluginRegistry();
+
+    withPluginRegistrationContext(building, "actual-plugin", () => {
+      registerMemoryPromptSupplement("spoofed-plugin", () => ["supplement"]);
+      registerMemoryPromptPreparation("spoofed-plugin", async () => ["prepared"]);
+    });
+
+    expect(building.memoryPromptSupplements[0]?.pluginId).toBe("actual-plugin");
+    expect(building.memoryPromptPreparations[0]?.pluginId).toBe("actual-plugin");
   });
 
   it("exposes active memory public artifacts for companion plugins", async () => {
